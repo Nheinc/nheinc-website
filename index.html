@@ -261,6 +261,11 @@
       .form-sent { display: none; background: #17351f; color: #c9f0d2; padding: 13px 16px; font-size: 16px; margin-top: 16px; }
       @media (prefers-color-scheme: light) { .form-sent { background: #e2f3e5; color: #175425; } }
       .form-sent.show { display: block; }
+      .form-error { display: none; background: #3d1712; color: #f3cdc4; padding: 13px 16px; font-size: 16px; margin-top: 16px; }
+      @media (prefers-color-scheme: light) { .form-error { background: #fbe7e2; color: #7c2314; } }
+      .form-error.show { display: block; }
+      .turnstile-slot { margin: 2px 0 14px; }
+      .hp { position: absolute; left: -9999px; width: 1px; height: 1px; opacity: 0; }
 
       /* ---------- footer ---------- */
       footer { background: var(--dark); color: var(--dark-soft); padding: 46px 0 40px; border-top: 3px solid var(--accent); }
@@ -503,7 +508,7 @@
             </div>
             <form class="estimate" id="estimateForm">
               <h3>Tell us about the job</h3>
-              <p>Fill this in and hit send — it opens your email app with everything addressed to estimating@nheinc.ca, ready to go.</p>
+              <p>Fill this in and hit send. It comes straight to us and we will get back to you with next steps.</p>
               <div class="field-row">
                 <div class="field">
                   <label for="f-name">Your name</label>
@@ -513,9 +518,13 @@
                   <label for="f-div">Division</label>
                   <select id="f-div" name="division" required>
                     
-                    <option value="Excavation">Excavation</option>
+                    <option value="excavation">Excavation</option>
+                    <option value="demolition">Demolition</option>
+                    <option value="land-clearing">Land clearing</option>
+                    <option value="grading">Grading / sitework</option>
+                    <option value="multiple">Multiple services</option>
                     
-                    <option value="Not sure">Not sure yet</option>
+                    <option value="unsure">Not sure yet</option>
                   </select>
                 </div>
               </div>
@@ -531,15 +540,19 @@
               </div>
               <div class="field">
                 <label for="f-town">Job location (town / city)</label>
-                <input id="f-town" name="town" type="text" autocomplete="address-level2" />
+                <input id="f-town" name="town" type="text" autocomplete="address-level2" required />
               </div>
               <div class="field">
                 <label for="f-desc">What needs doing?</label>
                 <textarea id="f-desc" name="description" rows="5" required placeholder="e.g. trench and duct bank for a new build in Thorold, lot needs grading, hoping to start next month…"></textarea>
               </div>
+              <div class="hp" aria-hidden="true"><label>Leave this field empty<input id="f-website" name="website" type="text" tabindex="-1" autocomplete="off" /></label></div>
+              <input id="f-token" name="client_token" type="hidden" />
+              <div class="turnstile-slot" id="turnstileSlot"></div>
               <button class="btn btn-accent submit-btn" type="submit">Send Estimate Request</button>
               <p class="form-note">Rather just talk? Call <a href="tel:+19059930412" style="color:var(--accent); font-weight:600;">(905) 993-0412</a> — or email <a href="mailto:info@nheinc.ca" style="color:var(--accent); font-weight:600;">info@nheinc.ca</a> directly.</p>
-              <div class="form-sent" id="formSent" role="status">Your email app should be opening with the request filled in — just press send there and we'll get back to you.</div>
+              <div class="form-error" id="formError" role="alert"></div>
+              <div class="form-sent" id="formSent" role="status"></div>
             </form>
           </div>
         </div>
@@ -614,35 +627,91 @@
     </script>
     <script>
       (function () {
+        'use strict';
+        var TURNSTILE_SITE_KEY = '0x4AAAAAAFuhVf0UzZHjZ1OX';
         var form = document.getElementById('estimateForm');
         var sent = document.getElementById('formSent');
+        var errorBox = document.getElementById('formError');
+        var tokenEl = document.getElementById('f-token');
+
+        function newToken() {
+          if (window.crypto && crypto.randomUUID) return crypto.randomUUID();
+          var buf = new Uint8Array(16);
+          if (window.crypto) crypto.getRandomValues(buf);
+          return Array.prototype.map.call(buf, function (b) {
+            return ('0' + b.toString(16)).slice(-2);
+          }).join('');
+        }
+        tokenEl.value = newToken();
+
+        var slot = document.getElementById('turnstileSlot');
+        var widget = document.createElement('div');
+        widget.className = 'cf-turnstile';
+        widget.setAttribute('data-sitekey', TURNSTILE_SITE_KEY);
+        widget.setAttribute('data-theme', 'auto');
+        slot.appendChild(widget);
+        var ts = document.createElement('script');
+        ts.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js';
+        ts.async = true;
+        ts.defer = true;
+        document.head.appendChild(ts);
+
+        function val(id) {
+          var el = document.getElementById(id);
+          return el ? el.value.trim() : '';
+        }
+        function showError(msg) {
+          errorBox.textContent = msg;
+          errorBox.classList.add('show');
+        }
+        function clearError() {
+          errorBox.textContent = '';
+          errorBox.classList.remove('show');
+        }
+
         form.addEventListener('submit', function (e) {
           e.preventDefault();
-          function val(id) {
-            var el = document.getElementById(id);
-            return el ? el.value.trim() : '';
-          }
-          var name = val('f-name');
-          var division = val('f-div');
-          var phone = val('f-phone');
-          var email = val('f-email');
-          var town = val('f-town');
-          var desc = val('f-desc');
-          var subject = 'Estimate request — ' + division + (name ? ' — ' + name : '');
-          var lines = [
-            'Name: ' + name,
-            'Division: ' + division,
-            'Phone: ' + (phone || '—'),
-            'Email: ' + (email || '—'),
-            'Job location: ' + (town || '—'),
-            '',
-            'Job description:',
-            desc
-          ];
-          var href = 'mailto:estimating@nheinc.ca?subject=' + encodeURIComponent(subject) +
-                     '&body=' + encodeURIComponent(lines.join('\n'));
-          window.location.href = href;
-          sent.classList.add('show');
+          clearError();
+          sent.classList.remove('show');
+          var btn = form.querySelector('.submit-btn');
+          var fd = new FormData();
+          fd.append('name', val('f-name'));
+          fd.append('service', val('f-div'));
+          fd.append('phone', val('f-phone'));
+          fd.append('email', val('f-email'));
+          fd.append('town', val('f-town'));
+          fd.append('description', val('f-desc'));
+          fd.append('website', val('f-website'));
+          fd.append('client_token', tokenEl.value);
+          var tsInput = form.querySelector('input[name="cf-turnstile-response"]');
+          if (tsInput && tsInput.value) fd.append('cf-turnstile-response', tsInput.value);
+          btn.disabled = true;
+          btn.textContent = 'Sending...';
+          fetch('/api/quotes', { method: 'POST', body: fd })
+            .then(function (r) { return r.json(); })
+            .then(function (data) {
+              btn.disabled = false;
+              btn.textContent = 'Send Estimate Request';
+              if (data && data.ok) {
+                form.reset();
+                tokenEl.value = newToken();
+                if (window.turnstile) window.turnstile.reset();
+                sent.textContent = 'Thanks, your request is in' + (data.ref ? ' (reference ' + data.ref + ')' : '') + '. We will get back to you shortly.';
+                sent.classList.add('show');
+                sent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+              } else {
+                var errs = (data && data.errors) || {};
+                var msg = errs.form || errs.name || errs.contact || errs.email || errs.phone || errs.service || errs.town || errs.description || 'Something went wrong. Please try again, or call (905) 993-0412.';
+                showError(msg);
+                if (window.turnstile) window.turnstile.reset();
+              }
+            })
+            .catch(function () {
+              btn.disabled = false;
+              btn.textContent = 'Send Estimate Request';
+              showError('We could not send that just now. Please try again, or call (905) 993-0412.');
+              if (window.turnstile) window.turnstile.reset();
+            });
         });
       })();
     </script>
